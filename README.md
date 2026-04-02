@@ -1,6 +1,6 @@
 # Claude-to-IM Skill
 
-Bridge Claude Code / Codex to IM platforms — chat with AI coding agents from Telegram, Discord, Feishu/Lark, or QQ.
+Bridge Claude Code / Codex to IM platforms — chat with AI coding agents from Telegram, Discord, Feishu/Lark, QQ, or WeChat.
 
 [中文文档](README_CN.md)
 
@@ -13,7 +13,7 @@ Bridge Claude Code / Codex to IM platforms — chat with AI coding agents from T
 This skill runs a background daemon that connects your IM bots to Claude Code or Codex sessions. Messages from IM are forwarded to the AI coding agent, and responses (including tool use, permission requests, streaming previews) are sent back to your chat.
 
 ```
-You (Telegram/Discord/Feishu/QQ)
+You (Telegram/Discord/Feishu/QQ/WeChat)
   ↕ Bot API
 Background Daemon (Node.js)
   ↕ Claude Agent SDK or Codex SDK (configurable via CTI_RUNTIME)
@@ -22,9 +22,10 @@ Claude Code / Codex → reads/writes your codebase
 
 ## Features
 
-- **Four IM platforms** — Telegram, Discord, Feishu/Lark, QQ — enable any combination
+- **Five IM platforms** — Telegram, Discord, Feishu/Lark, QQ, WeChat — enable any combination
 - **Interactive setup** — guided wizard collects tokens with step-by-step instructions
 - **Permission control** — tool calls require explicit approval via inline buttons (Telegram/Discord) or text `/perm` commands (Feishu/QQ)
+- **WeChat support** — official OpenClaw plugin integration via weixin-agent-sdk
 - **Streaming preview** — see Claude's response as it types (Telegram & Discord)
 - **Session persistence** — conversations survive daemon restarts
 - **Secret protection** — tokens stored with `chmod 600`, auto-redacted in all logs
@@ -32,7 +33,7 @@ Claude Code / Codex → reads/writes your codebase
 
 ## Prerequisites
 
-- **Node.js >= 20**
+- **Node.js >= 20** (>= 22 for WeChat)
 - **Claude Code CLI** (for `CTI_RUNTIME=claude` or `auto`) — installed and authenticated (`claude` command available)
 - **Codex CLI** (for `CTI_RUNTIME=codex` or `auto`) — `npm install -g @openai/codex`. Auth: run `codex auth login`, or set `OPENAI_API_KEY` (optional, for API mode)
 
@@ -131,6 +132,16 @@ All commands are run inside Claude Code or Codex:
 | `/claude-to-im reconfigure` | "reconfigure" / "修改配置" | Update config interactively |
 | `/claude-to-im doctor` | "doctor" / "诊断" | Diagnose issues |
 
+### WeChat Commands
+
+WeChat runs separately from the main bridge. Use npm scripts directly:
+
+```bash
+npm run wechat:login   # Scan QR to connect WeChat
+npm run wechat:start   # Start WeChat bridge daemon
+npm run wechat:dev     # Development mode (foreground)
+```
+
 ## Platform Setup Guides
 
 The `setup` wizard provides inline guidance for every step. Here's a summary:
@@ -169,6 +180,43 @@ The `setup` wizard provides inline guidance for every step. Here's a summary:
 4. `CTI_QQ_ALLOWED_USERS` takes `user_openid` values (not QQ numbers) — can be left empty initially
 5. Set `CTI_QQ_IMAGE_ENABLED=false` if the underlying provider doesn't support image input
 
+### WeChat (微信)
+
+> **Requirements**: Node.js >= 22, latest WeChat app with OpenClaw plugin support (update via App Store or scan QR on login)
+
+WeChat integration uses the official OpenClaw plugin via [weixin-agent-sdk](https://github.com/wong2/weixin-agent-sdk). It runs as a **separate process** from the main bridge daemon.
+
+#### Setup
+
+```bash
+# 1. Login (scan QR code with WeChat)
+npm run wechat:login
+
+# 2. Start WeChat bridge
+npm run wechat:start
+
+# 3. (Optional) Development mode with auto-reload
+npm run wechat:dev
+```
+
+#### Configuration
+
+Add to `~/.claude-to-im/config.env`:
+
+```bash
+# WeChat settings
+CTI_WEIXIN_AUTO_APPROVE=true   # Auto-approve tool permissions (recommended for WeChat)
+CTI_WEIXIN_ACCOUNT_ID=         # Optional: specific account ID (auto-selected if empty)
+CTI_WEIXIN_ALLOWED_USERS=      # Optional: comma-separated user IDs
+```
+
+#### Limitations
+
+- **No inline permission buttons** — WeChat doesn't support interactive buttons like Telegram/Discord
+- **Auto-approve recommended** — Set `CTI_WEIXIN_AUTO_APPROVE=true` for tool usage
+- **No streaming preview** — Response is sent after completion
+- **Separate process** — WeChat runs independently from other channels (Telegram, Discord, etc.)
+
 ## Architecture
 
 ```
@@ -191,6 +239,8 @@ The `setup` wizard provides inline guidance for every step. Here's a summary:
 | Component | Role |
 |---|---|
 | `src/main.ts` | Daemon entry — assembles DI, starts bridge |
+| `src/wechat-main.ts` | WeChat daemon entry — separate process |
+| `src/wechat-agent.ts` | WeChat Agent — bridges weixin-agent-sdk to LLMProvider |
 | `src/config.ts` | Load/save `config.env`, map to bridge settings |
 | `src/store.ts` | JSON file BridgeStore (30 methods, write-through cache) |
 | `src/llm-provider.ts` | Claude Agent SDK `query()` → SSE stream |

@@ -28,6 +28,10 @@ export interface Config {
   qqAllowedUsers?: string[];
   qqImageEnabled?: boolean;
   qqMaxImageSize?: number;
+  // WeChat
+  weixinAccountId?: string;
+  weixinAutoApprove?: boolean;
+  weixinAllowedUsers?: string[];
   // Auto-approve all tool permission requests without user confirmation
   autoApprove?: boolean;
 }
@@ -104,6 +108,9 @@ export function loadConfig(): Config {
     qqMaxImageSize: env.get("CTI_QQ_MAX_IMAGE_SIZE")
       ? Number(env.get("CTI_QQ_MAX_IMAGE_SIZE"))
       : undefined,
+    weixinAccountId: env.get("CTI_WEIXIN_ACCOUNT_ID") || undefined,
+    weixinAutoApprove: env.get("CTI_WEIXIN_AUTO_APPROVE") === "true",
+    weixinAllowedUsers: splitCsv(env.get("CTI_WEIXIN_ALLOWED_USERS")),
     autoApprove: env.get("CTI_AUTO_APPROVE") === "true",
   };
 }
@@ -159,6 +166,14 @@ export function saveConfig(config: Config): void {
     out += formatEnvLine("CTI_QQ_IMAGE_ENABLED", String(config.qqImageEnabled));
   if (config.qqMaxImageSize !== undefined)
     out += formatEnvLine("CTI_QQ_MAX_IMAGE_SIZE", String(config.qqMaxImageSize));
+  // WeChat
+  out += formatEnvLine("CTI_WEIXIN_ACCOUNT_ID", config.weixinAccountId);
+  if (config.weixinAutoApprove !== undefined)
+    out += formatEnvLine("CTI_WEIXIN_AUTO_APPROVE", String(config.weixinAutoApprove));
+  out += formatEnvLine(
+    "CTI_WEIXIN_ALLOWED_USERS",
+    config.weixinAllowedUsers?.join(",")
+  );
 
   fs.mkdirSync(CTI_HOME, { recursive: true });
   const tmpPath = CONFIG_PATH + ".tmp";

@@ -1,17 +1,22 @@
 {
   "name": "claude-to-im-skill",
   "version": "0.1.0",
-  "description": "Claude Code Skill: Bridge IM platforms (Telegram, Discord, Feishu, QQ) to Claude Code sessions",
+  "description": "Claude Code Skill: Bridge IM platforms (Telegram, Discord, Feishu, QQ, WeChat) to Claude Code sessions",
   "type": "module",
   "scripts": {
     "build": "node scripts/build.js",
     "typecheck": "tsc --noEmit",
     "dev": "tsx src/main.ts",
-    "test": "CTI_HOME=$(mktemp -d) node --test --import tsx --test-timeout=15000 src/__tests__/*.test.ts"
+    "test": "CTI_HOME=$(mktemp -d) node --test --import tsx --test-timeout=15000 src/__tests__/*.test.ts",
+    "wechat:login": "tsx src/wechat-main.ts login",
+    "wechat:start": "tsx src/wechat-main.ts start",
+    "wechat:dev": "tsx src/wechat-main.ts dev"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.62",
-    "claude-to-im": "github:op7418/claude-to-im"
+    "@openai/codex": "^0.116.0",
+    "claude-to-im": "github:op7418/claude-to-im",
+    "weixin-agent-sdk": "file:../weixin-agent-sdk/packages/sdk"
   },
   "optionalDependencies": {
     "@openai/codex-sdk": "^0.110.0"
