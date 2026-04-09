@@ -1,16 +1,10 @@
 /**
- * OpenAI-Compatible Provider — LLMProvider implementation that calls
- * any OpenAI-compatible /v1/chat/completions API.
+ * OpenAI-Compatible Provider — calls any /v1/chat/completions API.
  *
- * Supports streaming SSE responses, conversation history, image attachments
- * (vision), and auto-approves all tool usage (no permission gateway needed
- * since plain chat completions have no tool-call permission model).
+ * No local CLI process needed; auto-approves all tool usage since plain
+ * chat completions have no tool-call permission model.
  *
- * Configuration via environment variables:
- *   CTI_OPENAI_COMPAT_BASE_URL — base URL (default: http://localhost:8000/v1)
- *   CTI_OPENAI_COMPAT_API_KEY  — API key (default: empty)
- *   CTI_OPENAI_COMPAT_MODEL    — model name (default: gpt-3.5-turbo)
- *   CTI_OPENAI_COMPAT_TIMEOUT  — request timeout in ms (default: 120000)
+ * Config: CTI_OPENAI_COMPAT_BASE_URL, _API_KEY, _MODEL, _TIMEOUT
  */
 
 import type { LLMProvider, StreamChatParams, FileAttachment } from 'claude-to-im/src/lib/bridge/host.js';
@@ -78,17 +72,18 @@ function parseSSELines(
 ): string[] {
   buffer.value += chunk;
   const lines: string[] = [];
+  let pos = 0;
   let idx: number;
 
-  while ((idx = buffer.value.indexOf('\n')) !== -1) {
-    const line = buffer.value.slice(0, idx).replace(/\r$/, '');
-    buffer.value = buffer.value.slice(idx + 1);
+  while ((idx = buffer.value.indexOf('\n', pos)) !== -1) {
+    const line = buffer.value.slice(pos, idx).replace(/\r$/, '');
     if (line.startsWith('data: ')) {
       lines.push(line.slice(6));
     }
-    // Ignore non-data lines (comments, event:, id:, retry:, etc.)
+    pos = idx + 1;
   }
 
+  buffer.value = buffer.value.slice(pos);
   return lines;
 }
 
@@ -110,6 +105,8 @@ export class OpenAICompatProvider implements LLMProvider {
     _pendingPerms: PendingPermissions,
     opts?: { baseUrl?: string; apiKey?: string; model?: string; timeoutMs?: number },
   ) {
+    // _pendingPerms accepted for interface consistency but not used —
+    // plain chat completions have no tool-call permission model.
     this.baseUrl = (
       opts?.baseUrl
       || process.env.CTI_OPENAI_COMPAT_BASE_URL
@@ -132,12 +129,10 @@ export class OpenAICompatProvider implements LLMProvider {
             // ── Build messages array ──
             const messages: ChatMessage[] = [];
 
-            // System prompt
             if (params.systemPrompt) {
               messages.push({ role: 'system', content: params.systemPrompt });
             }
 
-            // Resume conversation history if sdkSessionId is present
             if (params.sdkSessionId) {
               const history = sessions.get(params.sdkSessionId);
               if (history) {
@@ -145,36 +140,28 @@ export class OpenAICompatProvider implements LLMProvider {
               }
             }
 
-            // Current user message
+            // Bridge conversation history (inserted before current message)
+            if (params.conversationHistory?.length) {
+              messages.push(...params.conversationHistory.map(m => ({
+                role: m.role,
+                content: m.content,
+              })));
+            }
+
+            // Current user message (with optional images)
             const imageParts = buildImageParts(params.files ?? []);
             if (imageParts.length > 0) {
-              const parts: OpenAIContentPart[] = [
-                { type: 'text', text: params.prompt },
-                ...imageParts,
-              ];
-              messages.push({ role: 'user', content: parts });
+              messages.push({
+                role: 'user',
+                content: [
+                  { type: 'text', text: params.prompt },
+                  ...imageParts,
+                ],
+              });
             } else {
               messages.push({ role: 'user', content: params.prompt });
             }
 
-            // Also include conversationHistory from bridge if provided
-            if (params.conversationHistory && params.conversationHistory.length > 0) {
-              // Prepend bridge history before the current message
-              const bridgeHistory: ChatMessage[] = params.conversationHistory.map(m => ({
-                role: m.role,
-                content: m.content,
-              }));
-              // Insert bridge history after system prompt, before current message
-              const currentMsg = messages.pop()!;
-              messages.splice(
-                messages[0]?.role === 'system' ? 1 : 0,
-                0,
-                ...bridgeHistory,
-              );
-              messages.push(currentMsg);
-            }
-
-            // ── Build request ──
             const url = `${baseUrl}/chat/completions`;
             const headers: Record<string, string> = {
               'Content-Type': 'application/json',
@@ -190,26 +177,17 @@ export class OpenAICompatProvider implements LLMProvider {
             });
 
             // ── Fetch with timeout ──
-            const abortTimeout = setTimeout(() => {
-              console.warn('[openai-compat-provider] Request timed out after', timeoutMs, 'ms');
-            }, timeoutMs);
-
-            let response: Response;
-            try {
-              response = await fetch(url, {
-                method: 'POST',
-                headers,
-                body,
-                signal: params.abortController?.signal
-                  ? AbortSignal.any([
-                      params.abortController.signal,
-                      AbortSignal.timeout(timeoutMs),
-                    ])
-                  : AbortSignal.timeout(timeoutMs),
-              });
-            } finally {
-              clearTimeout(abortTimeout);
-            }
+            const response = await fetch(url, {
+              method: 'POST',
+              headers,
+              body,
+              signal: params.abortController?.signal
+                ? AbortSignal.any([
+                    params.abortController.signal,
+                    AbortSignal.timeout(timeoutMs),
+                  ])
+                : AbortSignal.timeout(timeoutMs),
+            });
 
             if (!response.ok) {
               let errorBody = '';
@@ -226,11 +204,10 @@ export class OpenAICompatProvider implements LLMProvider {
               throw new Error('OpenAI-compat API returned no response body');
             }
 
-            // ── Stream SSE response ──
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
             const sseBuffer = { value: '' };
-            let fullText = '';
+            const textChunks: string[] = [];
             let usageData: StreamDelta['usage'] | undefined;
             let responseId: string | undefined;
             let responseModel: string | undefined;
@@ -267,7 +244,7 @@ export class OpenAICompatProvider implements LLMProvider {
                   // Emit text deltas
                   const choice = delta.choices?.[0];
                   if (choice?.delta?.content) {
-                    fullText += choice.delta.content;
+                    textChunks.push(choice.delta.content);
                     controller.enqueue(sseEvent('text', choice.delta.content));
                   }
                 }
@@ -276,20 +253,16 @@ export class OpenAICompatProvider implements LLMProvider {
               reader.releaseLock();
             }
 
-            // ── Save conversation history ──
             const sessionId = params.sdkSessionId || params.sessionId;
+            const fullText = textChunks.join('');
             if (fullText && sessionId) {
               const existingHistory = sessions.get(sessionId) ?? [];
-              // Append user message and assistant response
-              const updatedHistory = [
+              sessions.set(sessionId, [
                 ...existingHistory,
                 { role: 'user' as const, content: params.prompt },
                 { role: 'assistant' as const, content: fullText },
-              ];
-              sessions.set(sessionId, updatedHistory);
+              ]);
             }
-
-            // ── Emit result ──
             controller.enqueue(sseEvent('result', {
               session_id: responseId || sessionId,
               usage: usageData ? {
@@ -327,27 +300,5 @@ export class OpenAICompatProvider implements LLMProvider {
         })();
       },
     });
-  }
-
-  /**
-   * Clear conversation history for a specific session.
-   * Useful for memory management on session end.
-   */
-  clearSession(sessionId: string): void {
-    this.sessions.delete(sessionId);
-  }
-
-  /**
-   * Clear all stored conversation histories.
-   */
-  clearAllSessions(): void {
-    this.sessions.clear();
-  }
-
-  /**
-   * Get the number of active sessions.
-   */
-  get sessionCount(): number {
-    return this.sessions.size;
   }
 }
