@@ -1,6 +1,6 @@
 # Claude-to-IM Skill
 
-Bridge Claude Code / Codex to IM platforms — chat with AI coding agents from Telegram, Discord, Feishu/Lark, QQ, or WeChat.
+Bridge AI coding agents to IM platforms — chat with Claude Code, Codex, or any OpenAI-compatible LLM from Telegram, Discord, Feishu/Lark, QQ, or WeChat.
 
 [中文文档](README_CN.md)
 
@@ -10,23 +10,38 @@ Bridge Claude Code / Codex to IM platforms — chat with AI coding agents from T
 
 ## How It Works
 
-This skill runs a background daemon that connects your IM bots to Claude Code or Codex sessions. Messages from IM are forwarded to the AI coding agent, and responses (including tool use, permission requests, streaming previews) are sent back to your chat.
+This skill runs a background daemon that connects your IM bots to AI coding agent sessions. Messages from IM are forwarded to the AI agent, and responses (including tool use, permission requests, streaming previews) are sent back to your chat.
 
 ```
 You (Telegram/Discord/Feishu/QQ/WeChat)
   ↕ Bot API
 Background Daemon (Node.js)
-  ↕ Claude Agent SDK or Codex SDK (configurable via CTI_RUNTIME)
-Claude Code / Codex → reads/writes your codebase
+  ↕ LLMProvider interface (configurable via CTI_RUNTIME)
+     ├─ Claude Code SDK  → Anthropic API
+     ├─ Codex SDK        → OpenAI API
+     └─ OpenAI Compat    → Any /v1/chat/completions API
+AI Agent → reads/writes your codebase
 ```
+
+## Supported Runtimes
+
+| Runtime | Config | How It Works |
+|---------|--------|-------------|
+| **Claude Code** | `CTI_RUNTIME=claude` | Spawns Claude CLI as subprocess → Anthropic API |
+| **Codex** | `CTI_RUNTIME=codex` | Spawns Codex CLI as subprocess → OpenAI API |
+| **OpenAI Compat** | `CTI_RUNTIME=openai-compat` | Direct HTTP to any `/v1/chat/completions` API |
+| **Auto** | `CTI_RUNTIME=auto` | Tries Claude first, falls back to Codex |
+
+The OpenAI-compatible runtime works with **Ollama, vLLM, OneAPI, LM Studio**, or any service implementing the `/v1/chat/completions` endpoint — no local CLI process needed.
 
 ## Features
 
 - **Five IM platforms** — Telegram, Discord, Feishu/Lark, QQ, WeChat — enable any combination
+- **Three AI runtimes** — Claude Code, Codex, or any OpenAI-compatible API (Ollama, vLLM, etc.)
 - **Interactive setup** — guided wizard collects tokens with step-by-step instructions
 - **Permission control** — tool calls require explicit approval via inline buttons (Telegram/Discord) or text `/perm` commands (Feishu/QQ)
-- **WeChat support** — official OpenClaw plugin integration via weixin-agent-sdk
-- **Streaming preview** — see Claude's response as it types (Telegram & Discord)
+- **WeChat support** — official OpenClaw plugin integration via weixin-agent-sdk, QR code login
+- **Streaming preview** — see the AI's response as it types (Telegram & Discord)
 - **Session persistence** — conversations survive daemon restarts
 - **Secret protection** — tokens stored with `chmod 600`, auto-redacted in all logs
 - **Zero code required** — install the skill and run `/claude-to-im setup`, that's it
@@ -35,7 +50,8 @@ Claude Code / Codex → reads/writes your codebase
 
 - **Node.js >= 20** (>= 22 for WeChat)
 - **Claude Code CLI** (for `CTI_RUNTIME=claude` or `auto`) — installed and authenticated (`claude` command available)
-- **Codex CLI** (for `CTI_RUNTIME=codex` or `auto`) — `npm install -g @openai/codex`. Auth: run `codex auth login`, or set `OPENAI_API_KEY` (optional, for API mode)
+- **Codex CLI** (for `CTI_RUNTIME=codex` or `auto`) — `npm install -g @openai/codex`. Auth: run `codex auth login`, or set `OPENAI_API_KEY`
+- **OpenAI-compatible API** (for `CTI_RUNTIME=openai-compat`) — any service implementing `/v1/chat/completions`
 
 ## Installation
 
@@ -208,6 +224,13 @@ Add to `~/.claude-to-im/config.env`:
 CTI_WEIXIN_AUTO_APPROVE=true   # Auto-approve tool permissions (recommended for WeChat)
 CTI_WEIXIN_ACCOUNT_ID=         # Optional: specific account ID (auto-selected if empty)
 CTI_WEIXIN_ALLOWED_USERS=      # Optional: comma-separated user IDs
+
+# Runtime: claude | codex | openai-compat | auto
+CTI_RUNTIME=claude
+
+# If using openai-compat runtime:
+# CTI_OPENAI_COMPAT_BASE_URL=http://localhost:8000/v1
+# CTI_OPENAI_COMPAT_MODEL=hermes-agent
 ```
 
 #### Limitations
@@ -216,6 +239,55 @@ CTI_WEIXIN_ALLOWED_USERS=      # Optional: comma-separated user IDs
 - **Auto-approve recommended** — Set `CTI_WEIXIN_AUTO_APPROVE=true` for tool usage
 - **No streaming preview** — Response is sent after completion
 - **Separate process** — WeChat runs independently from other channels (Telegram, Discord, etc.)
+
+## Runtime Configuration
+
+All runtime settings go in `~/.claude-to-im/config.env`:
+
+### Claude Code (default)
+
+```bash
+CTI_RUNTIME=claude
+# Claude CLI must be installed and authenticated
+```
+
+### Codex
+
+```bash
+CTI_RUNTIME=codex
+# Codex CLI must be installed: npm install -g @openai/codex
+# Auth via: codex auth login  OR  set OPENAI_API_KEY
+```
+
+### OpenAI-Compatible API
+
+```bash
+CTI_RUNTIME=openai-compat
+CTI_OPENAI_COMPAT_BASE_URL=http://localhost:8000/v1   # Required
+CTI_OPENAI_COMPAT_MODEL=hermes-agent                   # Required
+CTI_OPENAI_COMPAT_API_KEY=sk-xxx                       # Optional
+CTI_OPENAI_COMPAT_TIMEOUT=120000                       # Optional (ms, default 120000)
+```
+
+Works with any service implementing `/v1/chat/completions`: Ollama, vLLM, OneAPI, LM Studio, or self-hosted APIs.
+
+### Auto
+
+```bash
+CTI_RUNTIME=auto
+# Tries Claude CLI first; if not found or preflight fails, falls back to Codex
+```
+
+### Network Topology
+
+All connections are **outbound** — no public IP, port mapping, or domain needed:
+
+```
+Your machine ──HTTPS──→ ilinkai.weixin.qq.com   (WeChat, long polling)
+Your machine ──HTTPS──→ api.anthropic.com       (Claude)
+Your machine ──HTTPS──→ api.openai.com          (Codex)
+Your machine ──HTTP───→ localhost:8000/v1       (OpenAI-compat)
+```
 
 ## Architecture
 
@@ -234,23 +306,51 @@ CTI_WEIXIN_ALLOWED_USERS=      # Optional: comma-separated user IDs
     └── status.json         ← Current status
 ```
 
+### Architecture Diagram
+
+```
+┌─────────────┐     ┌──────────────────┐     ┌─────────────────┐
+│   IM User   │ ←→ │  IM SDK / Bot API │ ←→ │  Bridge Daemon  │
+└─────────────┘     └──────────────────┘     └────────┬────────┘
+                                                      │
+                                                      ▼
+                                            ┌─────────────────┐
+                                            │   LLMProvider   │
+                                            │   (interface)   │
+                                            └────────┬────────┘
+                                                      │
+              ┌───────────────────────────────────────┼──────────────────────┐
+              ▼                                       ▼                      ▼
+     ┌─────────────────┐                    ┌─────────────────┐    ┌──────────────────┐
+     │ SDKLLMProvider  │                    │  CodexProvider  │    │ OpenAICompat     │
+     │ (Claude CLI)    │                    │  (Codex CLI)    │    │ Provider         │
+     └────────┬────────┘                    └────────┬────────┘    └────────┬─────────┘
+              │                                      │                      │
+              ▼                                      ▼                      ▼
+     ┌─────────────────┐                    ┌─────────────────┐    ┌──────────────────┐
+     │  Anthropic API  │                    │   OpenAI API    │    │ Any OpenAI-compat│
+     └─────────────────┘                    └─────────────────┘    │ API service      │
+                                                                     └──────────────────┘
+```
+
 ### Key components
 
-| Component | Role |
-|---|---|
-| `src/main.ts` | Daemon entry — assembles DI, starts bridge |
-| `src/wechat-main.ts` | WeChat daemon entry — separate process |
-| `src/wechat-agent.ts` | WeChat Agent — bridges weixin-agent-sdk to LLMProvider |
-| `src/config.ts` | Load/save `config.env`, map to bridge settings |
-| `src/store.ts` | JSON file BridgeStore (30 methods, write-through cache) |
-| `src/llm-provider.ts` | Claude Agent SDK `query()` → SSE stream |
-| `src/codex-provider.ts` | Codex SDK `runStreamed()` → SSE stream |
-| `src/sse-utils.ts` | Shared SSE formatting helper |
-| `src/permission-gateway.ts` | Async bridge: SDK `canUseTool` ↔ IM buttons |
-| `src/logger.ts` | Secret-redacted file logging with rotation |
-| `scripts/daemon.sh` | Process management (start/stop/status/logs) |
-| `scripts/doctor.sh` | Health checks |
-| `SKILL.md` | Claude Code skill definition |
+| Component | File | Role |
+|---|---|---|
+| `src/main.ts` | Daemon entry | Assembles DI, starts bridge |
+| `src/wechat-main.ts` | WeChat entry | Separate process for WeChat mode |
+| `src/wechat-agent.ts` | WeChat agent | Bridges weixin-agent-sdk to LLMProvider |
+| `src/config.ts` | Config | Load/save `config.env`, runtime selection |
+| `src/store.ts` | Storage | JSON file BridgeStore (30 methods, write-through cache) |
+| `src/llm-provider.ts` | Claude runtime | Claude Agent SDK `query()` → SSE stream |
+| `src/codex-provider.ts` | Codex runtime | Codex SDK `runStreamed()` → SSE stream |
+| `src/openai-compat-provider.ts` | OpenAI-compat runtime | Direct HTTP to `/v1/chat/completions`, SSE streaming |
+| `src/sse-utils.ts` | Utility | Shared SSE formatting helper |
+| `src/permission-gateway.ts` | Permissions | Async bridge: SDK `canUseTool` ↔ IM buttons |
+| `src/logger.ts` | Logging | Secret-redacted file logging with rotation |
+| `scripts/daemon.sh` | Process mgmt | start/stop/status/logs |
+| `scripts/doctor.sh` | Diagnostics | Health checks |
+| `SKILL.md` | Skill def | Claude Code skill definition |
 
 ### Permission flow
 
