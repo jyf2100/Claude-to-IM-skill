@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 
 export interface Config {
-  runtime: 'claude' | 'codex' | 'auto';
+  runtime: 'claude' | 'codex' | 'openai-compat' | 'auto';
   enabledChannels: string[];
   defaultWorkDir: string;
   defaultModel?: string;
@@ -32,6 +32,10 @@ export interface Config {
   weixinAccountId?: string;
   weixinAutoApprove?: boolean;
   weixinAllowedUsers?: string[];
+  // OpenAI-compatible runtime
+  openaiCompatBaseUrl?: string;
+  openaiCompatApiKey?: string;
+  openaiCompatModel?: string;
   // Auto-approve all tool permission requests without user confirmation
   autoApprove?: boolean;
 }
@@ -78,7 +82,7 @@ export function loadConfig(): Config {
   }
 
   const rawRuntime = env.get("CTI_RUNTIME") || "claude";
-  const runtime = (["claude", "codex", "auto"].includes(rawRuntime) ? rawRuntime : "claude") as Config["runtime"];
+  const runtime = (["claude", "codex", "openai-compat", "auto"].includes(rawRuntime) ? rawRuntime : "claude") as Config["runtime"];
 
   return {
     runtime,
@@ -111,6 +115,9 @@ export function loadConfig(): Config {
     weixinAccountId: env.get("CTI_WEIXIN_ACCOUNT_ID") || undefined,
     weixinAutoApprove: env.get("CTI_WEIXIN_AUTO_APPROVE") === "true",
     weixinAllowedUsers: splitCsv(env.get("CTI_WEIXIN_ALLOWED_USERS")),
+    openaiCompatBaseUrl: env.get("CTI_OPENAI_COMPAT_BASE_URL") || undefined,
+    openaiCompatApiKey: env.get("CTI_OPENAI_COMPAT_API_KEY") || undefined,
+    openaiCompatModel: env.get("CTI_OPENAI_COMPAT_MODEL") || undefined,
     autoApprove: env.get("CTI_AUTO_APPROVE") === "true",
   };
 }
@@ -174,6 +181,10 @@ export function saveConfig(config: Config): void {
     "CTI_WEIXIN_ALLOWED_USERS",
     config.weixinAllowedUsers?.join(",")
   );
+  // OpenAI-compatible runtime
+  out += formatEnvLine("CTI_OPENAI_COMPAT_BASE_URL", config.openaiCompatBaseUrl);
+  out += formatEnvLine("CTI_OPENAI_COMPAT_API_KEY", config.openaiCompatApiKey);
+  out += formatEnvLine("CTI_OPENAI_COMPAT_MODEL", config.openaiCompatModel);
 
   fs.mkdirSync(CTI_HOME, { recursive: true });
   const tmpPath = CONFIG_PATH + ".tmp";
@@ -254,6 +265,14 @@ export function configToSettings(config: Config): Map<string, string> {
     m.set("bridge_qq_image_enabled", String(config.qqImageEnabled));
   if (config.qqMaxImageSize !== undefined)
     m.set("bridge_qq_max_image_size", String(config.qqMaxImageSize));
+
+  // ── OpenAI-compatible runtime ──
+  if (config.openaiCompatBaseUrl)
+    m.set("openai_compat_base_url", config.openaiCompatBaseUrl);
+  if (config.openaiCompatApiKey)
+    m.set("openai_compat_api_key", config.openaiCompatApiKey);
+  if (config.openaiCompatModel)
+    m.set("openai_compat_model", config.openaiCompatModel);
 
   // ── Defaults ──
   // Upstream keys: bridge_default_work_dir, bridge_default_model, default_model

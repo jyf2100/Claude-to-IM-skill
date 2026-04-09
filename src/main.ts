@@ -29,10 +29,20 @@ const PID_FILE = path.join(RUNTIME_DIR, 'bridge.pid');
  * Resolve the LLM provider based on the runtime setting.
  * - 'claude' (default): uses Claude Code SDK via SDKLLMProvider
  * - 'codex': uses @openai/codex-sdk via CodexProvider
+ * - 'openai-compat': uses OpenAI-compatible API via OpenAICompatProvider
  * - 'auto': tries Claude first, falls back to Codex
  */
 async function resolveProvider(config: Config, pendingPerms: PendingPermissions): Promise<LLMProvider> {
   const runtime = config.runtime;
+
+  if (runtime === 'openai-compat') {
+    const { OpenAICompatProvider } = await import('./openai-compat-provider.js');
+    return new OpenAICompatProvider(pendingPerms, {
+      baseUrl: config.openaiCompatBaseUrl,
+      apiKey: config.openaiCompatApiKey,
+      model: config.openaiCompatModel,
+    });
+  }
 
   if (runtime === 'codex') {
     const { CodexProvider } = await import('./codex-provider.js');

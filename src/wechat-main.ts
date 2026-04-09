@@ -56,7 +56,7 @@ Commands:
 
 Environment variables:
   CTI_HOME                Configuration directory (default: ~/.claude-to-im)
-  CTI_RUNTIME             Runtime: claude | codex | auto (default: claude)
+  CTI_RUNTIME             Runtime: claude | codex | openai-compat | auto (default: claude)
   CTI_DEFAULT_WORKDIR     Default working directory for Claude
   CTI_DEFAULT_MODEL       Default model name
   CTI_WEIXIN_AUTO_APPROVE Auto-approve tool permissions (default: false)
@@ -85,6 +85,18 @@ async function doStart(devMode = false): Promise<void> {
   // Resolve LLM provider
   const pendingPerms = new PendingPermissions();
   const cliPath = resolveClaudeCliPath();
+
+  if (config.runtime === 'openai-compat') {
+    const { OpenAICompatProvider } = await import('./openai-compat-provider.js');
+    const llm = new OpenAICompatProvider(pendingPerms, {
+      baseUrl: config.openaiCompatBaseUrl,
+      apiKey: config.openaiCompatApiKey,
+      model: config.openaiCompatModel,
+    });
+    const agent = new WeChatAgent(llm, config, pendingPerms);
+    await runAgent(agent, devMode);
+    return;
+  }
 
   if (config.runtime === 'codex') {
     const { CodexProvider } = await import('./codex-provider.js');
